@@ -2,11 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Debters Page</title>
+  <title>Debtors Page</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="https://cdn.jsdelivr.net/npm/emailjs-com@2.6.4/dist/email.min.js"></script>
+  <!-- Firebase SDKs -->
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
   <style>
     body {
       font-family: "Segoe UI", sans-serif;
@@ -81,15 +83,10 @@
       font-size: 14px;
       color: #4b5563;
     }
-    #summary {
-      text-align: center;
-      font-weight: bold;
-      margin-top: 10px;
-    }
   </style>
 </head>
 <body>
-  <h1>Debters Page</h1>
+  <h1>Debtors Page</h1>
   <div class="sync-status" id="syncStatus">Loading data...</div>
 
   <form id="debterForm">
@@ -99,16 +96,13 @@
     <input name="price" placeholder="Price" required type="number" min="0.01" step="0.01" />
     <input name="phone" placeholder="Phone" required />
     <input name="email" placeholder="Email" required />
-    <button type="submit">Add Debter</button>
+    <button type="submit">Add Debtor</button>
   </form>
 
   <div class="filters">
     <input type="text" id="dateFilter" placeholder="Filter by Date (MM/DD/YYYY)" />
-    <button onclick="clearFilter()">Clear Filter</button>
-    <button onclick="syncWithFirebase()" style="background:#7c3aed;">Sync Now</button>
+    <button onclick="loadFromFirestore()" style="background:#7c3aed;">Refresh</button>
   </div>
-
-  <div id="summary"></div>
 
   <table>
     <thead>
@@ -125,7 +119,6 @@
     const firebaseConfig = {
       apiKey: "AIzaSyDf6Ur8waVvn2FDmz7tWWo5knYPjYqD7gU",
       authDomain: "brits-student-portal.firebaseapp.com",
-      databaseURL: "https://brits-student-portal-default-rtdb.firebaseio.com",
       projectId: "brits-student-portal",
       storageBucket: "brits-student-portal.appspot.com",
       messagingSenderId: "883694223859",
@@ -133,8 +126,9 @@
       measurementId: "G-QJT287ZJQ6"
     };
 
-    firebase.initializeApp(firebaseConfig);
-    const database = firebase.database();
+    // Init Firebase & Firestore
+    const app = firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
 
     emailjs.init("8s4yABgdHVO5PULp9");
     const SERVICE_ID = "service_5yqb1nn";
@@ -145,100 +139,37 @@
     const form = document.getElementById("debterForm");
     const syncStatus = document.getElementById("syncStatus");
 
-    let debters = JSON.parse(localStorage.getItem("debters")) || [];
-
-    function escapeHTML(text) {
-      return text.replace(/[&<>"']/g, match =>
-        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[match])
-      );
-    }
-
-    function saveToFirebase() {
-      const dataObj = {};
-      debters.forEach(d => { dataObj[d.id] = d });
-      database.ref('debtRecords').set(dataObj)
-        .then(() => {
-          syncStatus.textContent = "Data synced with Firebase at " + new Date().toLocaleTimeString();
-          syncStatus.style.color = "#10b981";
-        })
-        .catch((error) => {
-          syncStatus.textContent = "Sync failed: " + error.message;
-          syncStatus.style.color = "#ef4444";
-        });
-    }
-
-    function loadFromFirebase() {
-      syncStatus.textContent = "Loading data from Firebase...";
-      database.ref('debtRecords').once('value')
-        .then((snapshot) => {
-          const firebaseData = snapshot.val();
-          debters = firebaseData ? Object.values(firebaseData) : [];
-          localStorage.setItem("debters", JSON.stringify(debters));
-          syncStatus.textContent = "Data loaded from Firebase at " + new Date().toLocaleTimeString();
-          syncStatus.style.color = "#10b981";
-          renderTable();
-        })
-        .catch((error) => {
-          syncStatus.textContent = "Firebase load error: " + error.message;
-          syncStatus.style.color = "#ef4444";
-        });
-    }
-
-    function syncWithFirebase() {
-      saveToFirebase();
-    }
-
-    function saveData() {
-      localStorage.setItem("debters", JSON.stringify(debters));
-      saveToFirebase();
-    }
-
-    function clearFilter() {
-      dateFilterInput.value = "";
-      renderTable();
-    }
-
-    function renderTable() {
+    function renderTable(debtors) {
       const filter = dateFilterInput.value.trim();
       tableBody.innerHTML = "";
-      const filtered = filter ? debters.filter(d => d.date === filter) : debters;
+
+      const filtered = filter ? debtors.filter(d => d.date === filter) : debtors;
 
       if (filtered.length === 0) {
-        tableBody.innerHTML = "<tr><td colspan='9' style='text-align:center;'>No debters found.</td></tr>";
-        document.getElementById("summary").textContent = "";
+        tableBody.innerHTML = "<tr><td colspan='9' style='text-align:center;'>No debtors found.</td></tr>";
         return;
       }
 
-      let totalAmount = 0;
-
       filtered.forEach((debter, index) => {
         const row = document.createElement("tr");
-        const isOverdue = isDebterOverdue(debter.date);
         const total = (debter.price * debter.quantity).toFixed(2);
-        totalAmount += parseFloat(total);
-
-        row.className = isOverdue ? "overdue" : "";
+        row.className = isDebterOverdue(debter.date) ? "overdue" : "";
         row.innerHTML = `
-          <td>${escapeHTML(debter.name)}</td>
-          <td>${escapeHTML(debter.item)}</td>
+          <td>${debter.name}</td>
+          <td>${debter.item}</td>
           <td>${debter.quantity}</td>
           <td>KES ${debter.price.toFixed(2)}</td>
           <td>KES ${total}</td>
           <td>${debter.date}</td>
           <td>${debter.time}</td>
-          <td>${escapeHTML(debter.email)}</td>
+          <td>${debter.email}</td>
           <td class="action-buttons">
-            <button onclick="sendInvoice(${index})" style="background:#facc15;">Send Invoice</button>
-            <button onclick="markPaid(${index})" style="background:#10b981;">Has Paid</button>
+            <button onclick="sendInvoice('${debter.id}')" style="background:#facc15;">Send Invoice</button>
+            <button onclick="markPaid('${debter.id}')" style="background:#10b981;">Has Paid</button>
           </td>
         `;
         tableBody.appendChild(row);
       });
-
-      document.getElementById("summary").textContent =
-        `Total Debters: ${filtered.length} | Total Unpaid: KES ${totalAmount.toFixed(2)}`;
-
-      saveData();
     }
 
     function isDebterOverdue(dateString) {
@@ -248,57 +179,46 @@
       return diffTime / (1000 * 60 * 60 * 24) >= 1;
     }
 
-    function autoSendReminders() {
-      debters.forEach((debter, index) => {
-        if (isDebterOverdue(debter.date) && !debter.reminderSent) {
-          sendInvoice(index, true);
-          debter.reminderSent = true;
-        }
-      });
-      saveData();
-    }
-
-    form.addEventListener("submit", (e) => {
-      e.preventDefault();
-      const now = new Date();
-      const quantity = parseInt(form.quantity.value);
-      const price = parseFloat(form.price.value);
-      const email = form.email.value.trim();
-      const phone = form.phone.value.trim();
-
-      if (!/\S+@\S+\.\S+/.test(email)) return alert("Invalid email address");
-      if (!/^\d{7,15}$/.test(phone)) return alert("Invalid phone number");
-
-      const newDebter = {
-        id: Date.now(),
-        name: form.name.value,
-        item: form.item.value,
-        quantity,
-        price,
-        phone,
-        email,
-        date: now.toLocaleDateString(),
-        time: now.toLocaleTimeString(),
-        reminderSent: false
-      };
-
-      debters.push(newDebter);
-      form.reset();
-      renderTable();
-    });
-
-    function markPaid(index) {
-      if (confirm("Mark this debt as paid and remove it?")) {
-        debters.splice(index, 1);
-        renderTable();
+    async function loadFromFirestore() {
+      try {
+        syncStatus.textContent = "Loading from Firestore...";
+        const snapshot = await db.collection("debtor").get();
+        const debtors = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        renderTable(debtors);
+        syncStatus.textContent = "Loaded from Firestore ✔️";
+        syncStatus.style.color = "#10b981";
+      } catch (e) {
+        syncStatus.textContent = "Error loading: " + e.message;
+        syncStatus.style.color = "#ef4444";
       }
     }
 
-    function sendInvoice(index, auto = false) {
-      const d = debters[index];
-      const total = (d.price * d.quantity).toFixed(2);
+    async function saveToFirestore(debter) {
+      try {
+        await db.collection("debtor").add(debter);
+        loadFromFirestore();
+      } catch (err) {
+        alert("Error saving: " + err.message);
+      }
+    }
 
-      if (!auto && !confirm(`Send invoice to ${d.name}?`)) return;
+    async function markPaid(id) {
+      if (confirm("Mark this debt as paid and remove it?")) {
+        try {
+          await db.collection("debtor").doc(id).delete();
+          loadFromFirestore();
+        } catch (err) {
+          alert("Error deleting: " + err.message);
+        }
+      }
+    }
+
+    async function sendInvoice(id) {
+      const doc = await db.collection("debtor").doc(id).get();
+      if (!doc.exists) return alert("Debtor not found.");
+      const d = doc.data();
+
+      const total = (d.price * d.quantity).toFixed(2);
 
       emailjs.send(SERVICE_ID, TEMPLATE_ID, {
         to_name: d.name,
@@ -310,23 +230,31 @@
         date: d.date,
         invoice_number: `INV-${Date.now().toString().slice(-6)}`
       })
-      .then(() => {
-        if (!auto) alert("Invoice sent to " + d.email);
-      })
-      .catch((err) => {
-        alert("Error sending email: " + err.text);
-      });
+      .then(() => alert("Invoice sent to " + d.email))
+      .catch((err) => alert("Error sending email: " + err.text));
     }
 
-    // Listeners
-    dateFilterInput.addEventListener("input", renderTable);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const now = new Date();
+      const newDebtor = {
+        name: form.name.value,
+        item: form.item.value,
+        quantity: parseInt(form.quantity.value),
+        price: parseFloat(form.price.value),
+        phone: form.phone.value,
+        email: form.email.value,
+        date: now.toLocaleDateString(),
+        time: now.toLocaleTimeString()
+      };
+      await saveToFirestore(newDebtor);
+      form.reset();
+    });
 
-    // Init
-    loadFromFirebase();
-    renderTable();
-    autoSendReminders();
-    setInterval(autoSendReminders, 3600000); // 1 hour
-    setInterval(saveToFirebase, 300000); // 5 mins
+    dateFilterInput.addEventListener("input", loadFromFirestore);
+
+    // On Load
+    loadFromFirestore();
   </script>
 </body>
 </html>
